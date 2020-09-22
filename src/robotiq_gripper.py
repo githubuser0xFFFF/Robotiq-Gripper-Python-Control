@@ -1,4 +1,4 @@
-"""Module to control Robotiq's gripper 2F-85."""
+"""Module to control Robotiq's grippers - tested with HAND-E"""
 
 import socket
 import threading
@@ -6,8 +6,7 @@ import time
 from enum import Enum
 from typing import Union, Tuple, OrderedDict
 
-
-class Gripper2f85:
+class RobotiqGripper:
     """
     Communicates with the gripper directly, via socket with string commands, leveraging string names for variables.
     """
@@ -120,18 +119,72 @@ class Gripper2f85:
     def _is_ack(data: str):
         return data == b'ack'
 
+    def _reset(self):
+        """
+        Reset the gripper. 
+        The following code is executed in the corresponding script function
+        def rq_reset(gripper_socket="1"):
+            rq_set_var("ACT", 0, gripper_socket)
+            rq_set_var("ATR", 0, gripper_socket)
+        
+            while(not rq_get_var("ACT", 1, gripper_socket) == 0 or not rq_get_var("STA", 1, gripper_socket) == 0):
+                rq_set_var("ACT", 0, gripper_socket)
+                rq_set_var("ATR", 0, gripper_socket)
+                sync()
+            end
+        
+            sleep(0.5)
+        end
+        """
+        self._set_var(self.ACT, 0)
+        self._set_var(self.ATR, 0)
+        while (not self._get_var(self.ACT) == 0 or not self._get_var(self.STA) == 0):
+            self._set_var(self.ACT, 0)
+            self._set_var(self.ATR, 0)
+        time.sleep(0.5)
+
+
     def activate(self, auto_calibrate: bool = True):
         """Resets the activation flag in the gripper, and sets it back to one, clearing previous fault flags.
 
         :param auto_calibrate: Whether to calibrate the minimum and maximum positions based on actual motion.
-        """
-        # clear and then reset ACT
-        self._set_var(self.STA, 0)
-        self._set_var(self.STA, 1)
 
-        # wait for activation to go through
-        while not self.is_active():
-            time.sleep(0.001)
+        The following code is executed in the corresponding script function
+        def rq_activate(gripper_socket="1"):
+            if (not rq_is_gripper_activated(gripper_socket)):
+                rq_reset(gripper_socket)
+        
+                while(not rq_get_var("ACT", 1, gripper_socket) == 0 or not rq_get_var("STA", 1, gripper_socket) == 0):
+                    rq_reset(gripper_socket)
+                    sync()
+                end
+        
+                rq_set_var("ACT",1, gripper_socket)
+            end
+        end
+
+        def rq_activate_and_wait(gripper_socket="1"):
+            if (not rq_is_gripper_activated(gripper_socket)):
+                rq_activate(gripper_socket)
+                sleep(1.0)
+        
+                while(not rq_get_var("ACT", 1, gripper_socket) == 1 or not rq_get_var("STA", 1, gripper_socket) == 3):
+                    sleep(0.1)
+                end
+        
+                sleep(0.5)
+            end
+        end
+        """
+        if not self.is_active():
+            self._reset()
+            while (not self._get_var(self.ACT) == 0 or not self._get_var(self.STA) == 0):
+                time.sleep(0.01)
+
+            self._set_var(self.ACT, 1)
+            time.sleep(1.0)
+            while (not self._get_var(self.ACT) == 1 or not self._get_var(self.STA) == 3):
+                time.sleep(0.01)
 
         # auto-calibrate position range if desired
         if auto_calibrate:
@@ -140,7 +193,7 @@ class Gripper2f85:
     def is_active(self):
         """Returns whether the gripper is active."""
         status = self._get_var(self.STA)
-        return Gripper2f85.GripperStatus(status) == Gripper2f85.GripperStatus.ACTIVE
+        return RobotiqGripper.GripperStatus(status) == RobotiqGripper.GripperStatus.ACTIVE
 
     def get_min_position(self) -> int:
         """Returns the minimum position the gripper can reach (open position)."""
@@ -177,19 +230,19 @@ class Gripper2f85:
         """
         # first try to open in case we are holding an object
         (position, status) = self.move_and_wait_for_pos(self.get_open_position(), 64, 1)
-        if Gripper2f85.ObjectStatus(status) != Gripper2f85.ObjectStatus.AT_DEST:
+        if RobotiqGripper.ObjectStatus(status) != RobotiqGripper.ObjectStatus.AT_DEST:
             raise RuntimeError(f"Calibration failed opening to start: {str(status)}")
 
         # try to close as far as possible, and record the number
         (position, status) = self.move_and_wait_for_pos(self.get_closed_position(), 64, 1)
-        if Gripper2f85.ObjectStatus(status) != Gripper2f85.ObjectStatus.AT_DEST:
+        if RobotiqGripper.ObjectStatus(status) != RobotiqGripper.ObjectStatus.AT_DEST:
             raise RuntimeError(f"Calibration failed because of an object: {str(status)}")
         assert position <= self._max_position
         self._max_position = position
 
         # try to open as far as possible, and record the number
         (position, status) = self.move_and_wait_for_pos(self.get_open_position(), 64, 1)
-        if Gripper2f85.ObjectStatus(status) != Gripper2f85.ObjectStatus.AT_DEST:
+        if RobotiqGripper.ObjectStatus(status) != RobotiqGripper.ObjectStatus.AT_DEST:
             raise RuntimeError(f"Calibration failed because of an object: {str(status)}")
         assert position >= self._min_position
         self._min_position = position
@@ -239,10 +292,10 @@ class Gripper2f85:
 
         # wait until not moving
         cur_obj = self._get_var(self.OBJ)
-        while Gripper2f85.ObjectStatus(cur_obj) == Gripper2f85.ObjectStatus.MOVING:
+        while RobotiqGripper.ObjectStatus(cur_obj) == RobotiqGripper.ObjectStatus.MOVING:
             cur_obj = self._get_var(self.OBJ)
 
         # report the actual position and the object status
         final_pos = self._get_var(self.POS)
         final_obj = cur_obj
-        return final_pos, Gripper2f85.ObjectStatus(final_obj)
+        return final_pos, RobotiqGripper.ObjectStatus(final_obj)
