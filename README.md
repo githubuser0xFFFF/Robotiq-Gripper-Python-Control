@@ -1,2 +1,2 @@
-# Robotiq-Gripper-Python-Control
+# py_robotique_gripper
 Python script for control of ROBOTIQ grippers
